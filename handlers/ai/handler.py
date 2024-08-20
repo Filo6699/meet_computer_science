@@ -89,10 +89,8 @@ async def prompt_ai(prompt: str, update: Update, context: ContextTypes.DEFAULT_T
     formatted_time = now.strftime("%Y-%m-%d %H:%M:%S")
 
     try:
+        preamble = SYSTEM_PROMPT.replace("<MEMORIES>", memory.get_all_memories())
         msg = f"""
-        ## Воспоминания
-        {memory.get_all_memories()}
-
         ## Данные
         Нынешнее время: {formatted_time}
 
@@ -101,7 +99,7 @@ async def prompt_ai(prompt: str, update: Update, context: ContextTypes.DEFAULT_T
         """
         ai_response = co.chat(
             chat_history=chat_history,
-            preamble=SYSTEM_PROMPT,
+            preamble=preamble,
             message=msg,
             max_tokens=400,
             temperature=0.3,
