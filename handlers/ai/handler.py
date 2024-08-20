@@ -11,7 +11,6 @@ import cohere
 from core.config import ADMIN_ID, ALLOWED_CHATS
 from core.bot import app
 from handlers.ai.memories import Memories
-from handlers.ai.tools import tools, functions_map, memory
 from handlers.ai.prompts import SYSTEM_PROMPT
 
 
@@ -26,9 +25,16 @@ if COHERE_API_KEYS_STR:
             "COHERE_API_KEYS has incorrect list structure. Disabling AI module..."
         )
 
+aliases = [
+    "саенс",
+    "саня",
+    "санс",
+    "@meet_computer_science_bot",
+]
 co = None
 current_key = 0
 chat_history = []
+memory = Memories()
 
 proxy_conf = config("proxy", default=None)
 proxies = None
@@ -43,8 +49,8 @@ def append_history(val):
     global chat_history
 
     chat_history.append(val)
-    if len(chat_history) > 10:
-        chat_history = chat_history[-25:]
+    if len(chat_history) > 100:
+        chat_history = chat_history[-100:]
 
 
 def update_co():
@@ -65,7 +71,7 @@ def update_co():
     logging.warn("Rotating API key for Cohere")
 
 
-async def prompt_ai(prompt: str, update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def prompt_ai(prompt: str, update: Update, context: ContextTypes.DEFAULT_TYPE, depth: int = 0):
     chat = update.effective_chat
     user = update.effective_user
 
@@ -74,22 +80,28 @@ async def prompt_ai(prompt: str, update: Update, context: ContextTypes.DEFAULT_T
     append_history({"role": "USER", "message": msg})
 
     try:
-        formatted_sys = SYSTEM_PROMPT.replace("<MEMORIES>", memory.get_all_memories())
+        msg = f"""
+        ## Воспоминания
+        {memory.get_all_memories()}
+
+        ## Сообщение пользователя, адресованное тебе
+        {user.username}: {prompt}
+        """
         ai_response = co.chat(
             chat_history=chat_history,
-            preamble=formatted_sys,
-            message=f"{user.username}: {prompt}",
+            preamble=SYSTEM_PROMPT,
+            message=msg,
             max_tokens=400,
-            # tools=tools,
+            temperature=1,
             model="command-r-plus",
         )
 
-        # logging.critical(ai_response.tool_calls)
-        # if ai_response.tool_calls:
-        #     for tool_call in ai_response.tool_calls:
-        #         output = functions_map[tool_call.name](**tool_call.parameters)
-
         ai_text: str = ai_response.text
+
+        remember_split = ai_text.split("/remember")
+        if len(remember_split) > 1:
+            memory.save_memory(remember_split[1].strip())
+            ai_text = remember_split[0]
 
         if not ai_text:
             logging.info(f"Nothing to answer")
@@ -127,8 +139,17 @@ async def prompt_ai(prompt: str, update: Update, context: ContextTypes.DEFAULT_T
                 reply_to_message_id=reply_to,
             )
     except Exception as err:
-        update_co()
-        logging.error(err)
+        if isinstance(err, cohere.TooManyRequestsError):
+            if depth >= len(COHERE_API_KEYS):
+                logging.critical("No keys work.")
+                await context.bot.send_message(chat_id=chat.id, text="Rate limited. Все ключи закончились")
+                return
+
+            logging.warning("Too many requests. Switching key...")
+            update_co()
+            await prompt_ai(prompt, update, context, depth + 1)
+            return
+        logging.error(err, type(err))
         await context.bot.send_message(chat_id=chat.id, text="Something went wrong.")
 
 
@@ -150,18 +171,6 @@ async def handle_ai(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await prompt_ai(prompt, update, context)
 
 
-async def handle_memories(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user.username
-    chat = update.effective_chat
-
-    args = update.message.text.split()
-    if len(args) > 2:
-        await context.bot.send_message(chat_id=chat.id, text=memory)
-
-    memory = memories.get_memory(user)
-    await context.bot.send_message(chat_id=chat.id, text=memory)
-
-
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     chat = update.effective_chat
@@ -172,7 +181,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message.text or len(update.message.text) < 2:
         return
 
-    if "Саенс" in update.message.text or (update.message.reply_to_message and update.message.reply_to_message.from_user.id == 7451911720):
+    if any([(alias in update.message.text.lower()) for alias in aliases]) or (update.message.reply_to_message and update.message.reply_to_message.from_user.id == 7451911720):
         await prompt_ai(update.message.text, update, context)
         return
 
@@ -185,5 +194,4 @@ if COHERE_API_KEYS:
     update_co()
 
     app.add_handler(CommandHandler("ai", handle_ai))
-    app.add_handler(CommandHandler("memory", handle_memories))
     app.add_handler(MessageHandler(filters.TEXT, handle_message))
