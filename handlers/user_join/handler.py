@@ -19,7 +19,7 @@ async def handle_new_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if pool:
         chat_members = await context.bot.get_chat_member_count(chat.id)
-        members_amount = chat_members - 5
+        members_amount = chat_members - 6
 
         if chat.id not in ALLOWED_CHATS:
             return
