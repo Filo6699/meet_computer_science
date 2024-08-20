@@ -1,6 +1,7 @@
 import logging
 import json
 import asyncio
+from datetime import datetime
 
 import httpx
 from decouple import config
@@ -79,10 +80,16 @@ async def prompt_ai(prompt: str, update: Update, context: ContextTypes.DEFAULT_T
     logging.info(f"AI prompt - {msg}")
     append_history({"role": "USER", "message": msg})
 
+    now = datetime.now()
+    formatted_time = now.strftime("%Y-%m-%d %H:%M:%S")
+
     try:
         msg = f"""
         ## Воспоминания
         {memory.get_all_memories()}
+
+        ## Данные
+        Нынешнее время: {formatted_time}
 
         ## Сообщение пользователя, адресованное тебе
         {user.username}: {prompt}
