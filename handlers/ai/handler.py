@@ -103,7 +103,7 @@ async def prompt_ai(prompt: str, update: Update, context: ContextTypes.DEFAULT_T
             preamble=SYSTEM_PROMPT,
             message=msg,
             max_tokens=400,
-            temperature=1,
+            temperature=0.3,
             model="command-r-plus",
         )
 
