@@ -30,6 +30,7 @@ aliases = [
     "саенс",
     "саня",
     "санс",
+    "санчес",
     "санчез",
     "александр",
     "фембой",
@@ -109,10 +110,10 @@ async def prompt_ai(prompt: str, update: Update, context: ContextTypes.DEFAULT_T
 
         ai_text: str = ai_response.text
 
-        remember_split = ai_text.split("/remember")
+        remember_split = ai_text.split("remember")
         if len(remember_split) > 1:
             memory.save_memory(remember_split[1].strip())
-            ai_text = remember_split[0]
+            ai_text = remember_split[0].strip("/")
 
         if not ai_text:
             logging.info(f"Nothing to answer")
