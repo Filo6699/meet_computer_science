@@ -32,10 +32,12 @@ async def handle_new_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 messages.append(fmted)
 
         for msg in messages:
-            await context.bot.send_message(chat_id=chat.id, text=msg, reply_to_message_id=update.message.id,)
+            await context.bot.send_message(
+                chat_id=chat.id,
+                text=msg,
+                reply_to_message_id=update.message.id,
+            )
             await sleep(1.3)
 
 
-app.add_handler(
-    MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, handle_new_user)
-)
+app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, handle_new_user))

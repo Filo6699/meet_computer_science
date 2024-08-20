@@ -68,7 +68,7 @@ async def prompt_ai(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = f"{user.username}: {prompt}"
     logging.info(f"AI prompt - {msg}")
     append_history({"role": "USER", "message": msg})
-    
+
     try:
         formatted_sys = SYSTEM_PROMPT.replace("<MEMORIES>", memories.get_all_memories())
         ai_response = co.chat(
@@ -82,7 +82,7 @@ async def prompt_ai(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ai_text: str = ai_response.text
         append_history({"role": "CHATBOT", "message": ai_text})
         remember_split = ai_text.split("/remember")
-        
+
         if len(remember_split) > 1:
             ai_text = remember_split[0].strip()
             for remb_chunk in remember_split[1:]:
@@ -106,7 +106,7 @@ async def prompt_ai(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         ai_messages = ai_text.split("<break>")
 
-        await context.bot.send_chat_action(chat_id=chat.id, action='typing')
+        await context.bot.send_chat_action(chat_id=chat.id, action="typing")
 
         for i, msg in enumerate(ai_messages):
             if not msg:
@@ -140,7 +140,7 @@ async def handle_memories(update: Update, context: ContextTypes.DEFAULT_TYPE):
     args = update.message.text.split()
     if len(args) > 2:
         await context.bot.send_message(chat_id=chat.id, text=memory)
-    
+
     memory = memories.get_memory(user)
     await context.bot.send_message(chat_id=chat.id, text=memory)
 
