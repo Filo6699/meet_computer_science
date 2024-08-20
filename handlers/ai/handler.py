@@ -30,9 +30,13 @@ aliases = [
     "саенс",
     "саня",
     "санс",
+    "санчез",
+    "александр",
+    "фембой",
     "@meet_computer_science_bot",
 ]
 co = None
+
 current_key = 0
 chat_history = []
 memory = Memories()
