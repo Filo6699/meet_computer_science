@@ -2,12 +2,13 @@ import logging
 import json
 import importlib
 import pkgutil
+import asyncio
 from random import choice, random
 from asyncio import sleep
 from typing import Optional
 
 from decouple import config
-from telegram import Update
+from telegram import Update, Bot
 from telegram.ext import (
     ApplicationBuilder,
     Application,
@@ -34,7 +35,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def import_all_handlers():
     package = importlib.import_module("handlers")
     package_path = package.__path__
-    
+
     for _, module_name, _ in pkgutil.iter_modules(package_path):
         logging.info(f"Imported handlers.{module_name}")
         importlib.import_module(f"handlers.{module_name}")

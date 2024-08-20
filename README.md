@@ -35,6 +35,6 @@ This is the newer version, now its open-source, using a better library, collects
     python main.py
     ```
 
-## Contibuting
+## Contributing
 
 You indeed can

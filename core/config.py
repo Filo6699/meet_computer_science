@@ -1,5 +1,7 @@
 from decouple import config, UndefinedValueError
 import json
+import logging
+
 
 try:
     BOT_TOKEN = config("BOT_TOKEN")
@@ -9,8 +11,9 @@ try:
 except Exception as err:
     if isinstance(err, UndefinedValueError):
         missing_variable = err.args[0].split()[0]
-        print(f'Missing "{missing_variable}" in .env')
+        logging.critical(f'Missing "{missing_variable}" in .env')
     if isinstance(err, json.JSONDecodeError):
-        print(f"Invalid JSON-syntax in .env")
+        logging.critical(f"Invalid JSON-syntax in .env")
     if isinstance(err, ValueError):
-        print(f"Failed to parse an integer in .env")
+        logging.critical(f"Failed to parse an integer in .env")
+    exit(1)

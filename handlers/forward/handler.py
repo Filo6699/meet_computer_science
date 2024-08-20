@@ -14,14 +14,14 @@ async def forward(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if chat.id != ADMIN_ID:
         return
-    
+
     args = update.message.text.split()
 
     if len(args) < 3:
         msg = "Usage: /forward <chat_id> message..."
         await context.bot.send_message(chat_id=chat.id, text=msg)
         return
-    
+
     try:
         forward_chat_id = int(args[1])
     except ValueError as err:
@@ -31,10 +31,7 @@ async def forward(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     forward_message = " ".join(args[2:])
 
-    print(forward_chat_id)
     await context.bot.send_message(chat_id=forward_chat_id, text=forward_message)
 
 
-app.add_handler(
-    CommandHandler("forward", forward)
-)
+app.add_handler(CommandHandler("forward", forward))
