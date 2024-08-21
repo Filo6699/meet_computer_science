@@ -72,6 +72,7 @@ async def chat_parse(chat_id: int, depth=0):
     history_str = "\n".join(history)
 
     prompt = SCAN_CHAT_PROMPT.replace("<CHAT>", history)
+    prompt = SCAN_CHAT_PROMPT.replace("<MEMORIES>", memory.get_all_memories())
     if additional_prompt:
         prompt = prompt.replace("<additional_prompt>", additional_prompt)
 
