@@ -195,7 +195,7 @@ async def prompt_ai(
         preamble = preamble.replace("<ADMIN_ID>", str(ADMIN_ID))
         preamble = preamble.replace("<DATE>", formatted_time)
 
-        history = chat_history[chat.id][:-1]
+        history = chat_history[chat.id][-10:-1]
 
         ai_response = co.chat(
             chat_history=history,
@@ -244,10 +244,6 @@ async def prompt_ai(
             return
 
         ai_messages = ai_text.split("\n")
-        parts = [textwrap.wrap(m, width=120) for m in ai_messages]
-        ai_messages = []
-        for p in parts:
-            ai_messages.extend(p)
 
         for i, msg in enumerate(ai_messages):
             if not msg:
