@@ -41,6 +41,8 @@ current_key = 0
 chat_history = {}
 last_prompt = {}
 memory = Memories()
+
+UPDATE_INTERVAL = 50
 until_update: Dict[int, int] = {}
 
 proxy_conf = config("proxy", default=None)
@@ -71,10 +73,8 @@ async def chat_parse(chat_id: int, depth=0):
     
     history_str = "\n".join(history)
 
-    prompt = SCAN_CHAT_PROMPT.replace("<CHAT>", history)
-    prompt = SCAN_CHAT_PROMPT.replace("<MEMORIES>", memory.get_all_memories())
-    if additional_prompt:
-        prompt = prompt.replace("<additional_prompt>", additional_prompt)
+    prompt = SCAN_CHAT_PROMPT.replace("<CHAT>", history_str)
+    prompt = prompt.replace("<MEMORIES>", memory.get_all_memories())
 
     try:
         ai_response = co.chat(
@@ -91,7 +91,7 @@ async def chat_parse(chat_id: int, depth=0):
         new_memories = [mem for mem in new_memories if len(mem) > 2]
         for mem in new_memories:
             logging.info(f"Chat parse new memory: {mem}")
-            memory.save_memory(new_memories)
+            memory.save_memory(mem)
     except Exception as err:
         if isinstance(err, cohere.TooManyRequestsError):
             if depth >= len(COHERE_API_KEYS):
@@ -193,6 +193,7 @@ async def prompt_ai(
     try:
         preamble = SYSTEM_PROMPT.replace("<MEMORIES>", memory.get_all_memories())
         preamble = preamble.replace("<ADMIN_ID>", str(ADMIN_ID))
+        preamble = preamble.replace("<DATE>", formatted_time)
 
         history = chat_history[chat.id][:-1]
 
