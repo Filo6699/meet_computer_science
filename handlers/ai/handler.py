@@ -1,6 +1,7 @@
 import logging
 import json
 import asyncio
+from typing import Optional, List, Dict
 from time import time as now
 from datetime import datetime
 import textwrap
@@ -14,7 +15,7 @@ import cohere
 from core.config import ADMIN_ID, ALLOWED_CHATS
 from core.bot import app
 from handlers.ai.memories import Memories
-from handlers.ai.prompts import SYSTEM_PROMPT, RECYCLE_MEMORY_PROMPT
+from handlers.ai.prompts import SYSTEM_PROMPT, RECYCLE_MEMORY_PROMPT, SCAN_CHAT_PROMPT
 
 
 COHERE_API_KEYS_STR = config("COHERE_API_KEYS", default=None)
@@ -30,28 +31,24 @@ if COHERE_API_KEYS_STR:
 
 aliases = [
     "саенс",
-    "саня",
-    "санс",
-    "санчес",
-    "санчез",
-    "александр",
     "фембой",
     "@meet_computer_science_bot",
 ]
 co = None
 
 current_key = 0
+
 chat_history = {}
 last_prompt = {}
 memory = Memories()
-
+until_update: Dict[int, int] = {}
 
 proxy_conf = config("proxy", default=None)
 proxies = None
 if proxy_conf:
     proxies = {
-        'http://': proxy_conf,
-        'https://': proxy_conf,
+        "http://": proxy_conf,
+        "https://": proxy_conf,
     }
 
 
@@ -59,17 +56,67 @@ def escape_str(to_escape: str) -> str:
     return to_escape.replace("\\", "\\\\")
 
 
-async def recycle_memory(depth = 0):
-    prompt = RECYCLE_MEMORY_PROMPT.replace("<MEMORIES>", memory.get_all_memories())
+async def chat_parse(chat_id: int, depth=0):
+    if depth == 0:
+        logging.warn(f"Parsing a chat ({chat_id})")
+    
+    raw_history = chat_history[chat_id]
+    history = []
+    for msg in raw_history:
+        role = msg["role"]
+        message = msg["message"]
+        if role == "CHATBOT":
+            message = "Твоё сообщение - " + message
+        history.append(message)
+    
+    history_str = "\n".join(history)
+
+    prompt = SCAN_CHAT_PROMPT.replace("<CHAT>", history)
+    if additional_prompt:
+        prompt = prompt.replace("<additional_prompt>", additional_prompt)
 
     try:
         ai_response = co.chat(
             message=prompt,
-            max_tokens=500,
+            temperature=0,
+            model="command-r-plus",
+        )
+        
+        if "/decline" in ai_response.text:
+            logging.info(f"Nothing to memorize in chat parse")
+            return
+        
+        new_memories = ai_response.text.split("\n")
+        new_memories = [mem for mem in new_memories if len(mem) > 2]
+        for mem in new_memories:
+            logging.info(f"Chat parse new memory: {mem}")
+            memory.save_memory(new_memories)
+    except Exception as err:
+        if isinstance(err, cohere.TooManyRequestsError):
+            if depth >= len(COHERE_API_KEYS):
+                logging.critical("All keys are rate limited.")
+                return
+
+            logging.warning("Too many requests. Switching key...")
+            update_co()
+            await chat_parse(depth + 1)
+            return
+        logging.error(err, type(err))
+
+
+async def recycle_memory(additional_prompt: str="", depth=0):
+    prompt = RECYCLE_MEMORY_PROMPT.replace("<MEMORIES>", memory.get_all_memories())
+    if additional_prompt:
+        prompt = prompt.replace("<additional_prompt>", additional_prompt)
+
+    try:
+        ai_response = co.chat(
+            message=prompt,
             temperature=0,
             model="command-r-plus",
         )
         new_memories = ai_response.text.split("\n")
+        new_memories = [mem for mem in new_memories if len(mem) > 2]
         memory.replace_all_memories(new_memories)
     except Exception as err:
         if isinstance(err, cohere.TooManyRequestsError):
@@ -92,8 +139,8 @@ def append_history(chat_id: int, val):
 
     chat_history[chat_id].append(val)
 
-    if len(chat_history[chat_id]) > 5:
-        chat_history[chat_id] = chat_history[chat_id][-5:]
+    if len(chat_history[chat_id]) > 100:
+        chat_history[chat_id] = chat_history[chat_id][-100:]
 
 
 def update_co():
@@ -114,7 +161,9 @@ def update_co():
     logging.warn("Rotating API key for Cohere")
 
 
-async def prompt_ai(prompt: str, update: Update, context: ContextTypes.DEFAULT_TYPE, depth: int = 0):
+async def prompt_ai(
+    prompt: str, update: Update, context: ContextTypes.DEFAULT_TYPE, depth: int = 0
+):
     chat = update.effective_chat
     user = update.effective_user
 
@@ -123,33 +172,33 @@ async def prompt_ai(prompt: str, update: Update, context: ContextTypes.DEFAULT_T
 
     prompt = escape_str(prompt)
 
-    msg = f"Сообщение от {user.username} - {prompt}"
+    user_aliases = [
+        name
+        for name in [user.username, user.full_name, f"USER_ID_{user.id}"]
+        if type(name) == str and len(name) > 1
+    ]
+    username = user_aliases[0]  # Atleast 1 must be there
+    if len(user_aliases) > 1:
+        other_aliases = ", ".join(user_aliases[1:])
+        username += f" (aka {other_aliases})"
+
+    msg = f"Сообщение от {username} - {prompt}"
     logging.info(f"AI prompt - {msg}")
     append_history(chat.id, {"role": "USER", "message": msg})
 
     current_time = datetime.now()
-    formatted_time = current_time.strftime("%Y-%m-%d %H:%M:%S") 
-
-    user_aliases = [name for name in [user.username, user.full_name] if name]
-    username = user_aliases[0] # Atleast 1 must be there
-    if len(user_aliases) > 1:
-        other_aliases = ', '.join(user_aliases[1:])
-        username += f" (aka {other_aliases})"
+    formatted_time = current_time.strftime("%Y-%m-%d %H:%M:%S")
 
     try:
         preamble = SYSTEM_PROMPT.replace("<MEMORIES>", memory.get_all_memories())
+        preamble = preamble.replace("<ADMIN_ID>", str(ADMIN_ID))
 
         history = chat_history[chat.id][:-1]
-
-        msg = f"""
-        ## Input Text
-        {prompt}
-        """
 
         ai_response = co.chat(
             chat_history=history,
             preamble=preamble,
-            message=msg,
+            message=prompt,
             max_tokens=200,
             temperature=0,
             model="command-r-plus",
@@ -158,9 +207,10 @@ async def prompt_ai(prompt: str, update: Update, context: ContextTypes.DEFAULT_T
         ai_text: str = ai_response.text
         logging.info(f"AI response: {escape_str(ai_text)}")
 
-        remember_split = ai_text.split("remember")
+        remember_split = ai_text.split("/remember")
         if len(remember_split) > 1:
-            memory.save_memory(remember_split[1].strip())
+            for mem in remember_split[1:]:
+                memory.save_memory(mem.strip())
             if memory.is_too_much():
                 logging.warn("Recycling memory...")
                 asyncio.create_task(recycle_memory())
@@ -182,7 +232,7 @@ async def prompt_ai(prompt: str, update: Update, context: ContextTypes.DEFAULT_T
 
         append_history(chat.id, {"role": "CHATBOT", "message": escape_str(ai_text)})
 
-        if "<decline>" in ai_text:
+        if "/decline" in ai_text:
             logging.info(f"AI declined.")
             await context.bot.set_message_reaction(
                 chat_id=chat.id,
@@ -222,7 +272,9 @@ async def prompt_ai(prompt: str, update: Update, context: ContextTypes.DEFAULT_T
         if isinstance(err, cohere.TooManyRequestsError):
             if depth >= len(COHERE_API_KEYS):
                 logging.critical("All keys are rate limited.")
-                await context.bot.send_message(chat_id=chat.id, text="Rate limited. Все ключи закончились")
+                await context.bot.send_message(
+                    chat_id=chat.id, text="Rate limited. Все ключи закончились"
+                )
                 return
 
             logging.warning("Too many requests. Switching key...")
@@ -246,10 +298,57 @@ async def handle_ai(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg = "Usage: /ai message..."
         await context.bot.send_message(chat_id=chat.id, text=msg)
         return
-    
+
     prompt = " ".join(args[1:])
     asyncio.create_task(prompt_ai(prompt, update, context))
-    
+
+
+async def handle_memory_recycle(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    chat = update.effective_chat
+
+    if user.id != ADMIN_ID:
+        return
+
+    args = update.message.text.split(" ")
+    additional_prompt = None
+    if len(args) > 1:
+        additional_prompt = " ".join(args[1:])
+
+    await update.message.reply_text("Обновляю память!")
+    asyncio.create_task(recycle_memory(additional_prompt))
+
+
+async def handle_memory_addition(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    chat = update.effective_chat
+
+    if user.id != ADMIN_ID:
+        return
+
+    try:
+        args = update.message.text.split(" ")
+        new_memory = " ".join(args[1:]).strip()
+        if len(new_memory) == 0:
+            raise ValueError()
+        memory.save_memory(new_memory)
+        await update.message.reply_text("Запомнил!")
+    except (IndexError, AttributeError, ValueError):
+        await update.message.reply_text("Usage: /add_to_memory new_memory...")
+        return
+
+
+async def handle_chat_parse(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    chat = update.effective_chat
+
+    if user.id != ADMIN_ID:
+        return
+
+    await update.message.reply_text("Парсю чат!")
+    task = chat_parse(chat.id)
+    asyncio.create_task(task)
+
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -258,10 +357,21 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if chat.id not in ALLOWED_CHATS:
         return
 
+    if chat.id not in until_update:
+        until_update[chat.id] = UPDATE_INTERVAL + 1
+    
+    until_update[chat.id] -= 1
+    if until_update[chat.id] <= 0:
+        until_update[chat.id] = UPDATE_INTERVAL
+        asyncio.create_task(chat_parse(chat.id))
+
     if not update.message.text or len(update.message.text) < 2:
         return
 
-    if any([(alias in update.message.text.lower()) for alias in aliases]) or (update.message.reply_to_message and update.message.reply_to_message.from_user.id == 7451911720):
+    if any([(alias in update.message.text.lower()) for alias in aliases]) or (
+        update.message.reply_to_message
+        and update.message.reply_to_message.from_user.id == 7451911720
+    ):
         task = prompt_ai(update.message.text, update, context)
         asyncio.create_task(task)
         return
@@ -275,4 +385,7 @@ if COHERE_API_KEYS:
     update_co()
 
     app.add_handler(CommandHandler("ai", handle_ai))
+    app.add_handler(CommandHandler("chat_parse", handle_chat_parse))
+    app.add_handler(CommandHandler("memory_recycle", handle_memory_recycle))
+    app.add_handler(CommandHandler("add_to_memory", handle_memory_addition))
     app.add_handler(MessageHandler(filters.TEXT, handle_message))

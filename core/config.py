@@ -8,6 +8,7 @@ try:
     LOGGING_LEVEL = config("LOGGING_LEVEL")
     ADMIN_ID = int(config("ADMIN_ID"))
     ALLOWED_CHATS = set(json.loads(config("ALLOWED_CHATS")))
+    JOIN_CHATS = set(json.loads(config("JOIN_CHATS")))
 except Exception as err:
     if isinstance(err, UndefinedValueError):
         missing_variable = err.args[0].split()[0]

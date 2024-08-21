@@ -4,8 +4,8 @@ from asyncio import sleep
 from telegram import Update
 from telegram.ext import ContextTypes, MessageHandler, filters
 
-from handlers.user_join.messages import join_message_groups, leave_message_groups
-from core.config import ALLOWED_CHATS
+from handlers.user_join.messages import join_message_groups
+from core.config import JOIN_CHATS
 from core.bot import app
 
 
@@ -21,7 +21,7 @@ async def handle_new_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_members = await context.bot.get_chat_member_count(chat.id)
         members_amount = chat_members - 6
 
-        if chat.id not in ALLOWED_CHATS:
+        if chat.id not in JOIN_CHATS:
             return
 
         messages = []

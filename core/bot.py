@@ -49,4 +49,4 @@ def run_bot():
     app.add_handler(CommandHandler("start", start))
     import_all_handlers()
 
-    app.run_polling()
+    app.run_polling(drop_pending_updates=True)

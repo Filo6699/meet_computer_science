@@ -5,17 +5,17 @@ from typing import Optional, List
 
 class Memories:
     def __init__(self):
-        self._memories: set = set()
+        self._memories: list = []
 
         if os.path.isfile(".ai-memories.json"):
             with open(".ai-memories.json", "r", encoding="utf-8") as fd:
-                self._memories = set(json.load(fd))
+                self._memories = json.load(fd)
 
     def is_too_much(self) -> bool:
-        return len(self._memories) > 20
+        return len(self._memories) > 40
 
     def save_memory(self, memory: str):
-        self._memories.add(memory)
+        self._memories.append(memory)
         self.save_to_file()
 
     def delete_memory(self, memory: str):
@@ -26,7 +26,7 @@ class Memories:
             pass
 
     def replace_all_memories(self, new_memories: List[str]):
-        self._memories = set(new_memories)
+        self._memories = new_memories
         self.save_to_file()
 
     def get_all_memories(self) -> str:
@@ -34,4 +34,4 @@ class Memories:
 
     def save_to_file(self):
         with open(".ai-memories.json", "w", encoding="utf-8") as fd:
-            json.dump(list(self._memories), fd, ensure_ascii=False, indent=4)
+            json.dump(self._memories, fd, ensure_ascii=False, indent=4)
