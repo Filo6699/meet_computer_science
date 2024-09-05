@@ -175,33 +175,42 @@ async def prompt_ai(
 
     user_aliases = [
         name
-        for name in [user.username, user.full_name, f"USER_ID_{user.id}"]
+        for name in [user.full_name, user.username]
         if type(name) == str and len(name) > 1
     ]
-    username = user_aliases[0]  # Atleast 1 must be there
-    if len(user_aliases) > 1:
-        other_aliases = ", ".join(user_aliases[1:])
-        username += f" (aka {other_aliases})"
+    username = user_aliases[0]
 
-    msg = f"Сообщение от {username} - {prompt}"
+    msg = f"{username} пишет: \"{prompt}\""
     logging.info(f"AI prompt - {msg}")
-    append_history(chat.id, {"role": "USER", "message": msg})
+    if depth == 0:
+        append_history(chat.id, {"role": "USER", "message": msg})
 
     current_time = datetime.now()
     formatted_time = current_time.strftime("%Y-%m-%d %H:%M:%S")
 
     try:
+        await context.bot.send_chat_action(chat_id=chat.id, action="typing")
+
         preamble = SYSTEM_PROMPT.replace("<MEMORIES>", memory.get_all_memories())
-        preamble = preamble.replace("<ADMIN_ID>", str(ADMIN_ID))
         preamble = preamble.replace("<DATE>", formatted_time)
 
-        history = chat_history[chat.id][-10:-1]
+        history = chat_history[chat.id][-20:]
+        message_ids = {}
+        history_str = "Прошлые сообщения в чате\n"
+
+        for ind, msg in enumerate(history):
+            if ind == len(history) - 1:
+                line = f"\nСообщение адрессованное тебе\n{msg["message"]}\n"
+            else:
+                line = f"{msg["message"]}\n"
+            history_str += line
+        
+        history_str += "Придумай ответ на сообщение адрессованное тебе."
 
         ai_response = co.chat(
-            chat_history=history,
             preamble=preamble,
-            message=prompt,
-            max_tokens=200,
+            message=history_str,
+            max_tokens=350,
             temperature=0,
             model="command-r-plus",
         )
@@ -209,30 +218,27 @@ async def prompt_ai(
         ai_text: str = ai_response.text
         logging.info(f"AI response: {escape_str(ai_text)}")
 
-        remember_split = ai_text.split("/remember")
-        if len(remember_split) > 1:
+        line_split = ai_text.split("\n")
+        ai_text = ""
+        for line in line_split:
+            if len(line) == 0:
+                continue
+            remember_split = line.split("/remember")
+            line = remember_split[0].strip()
+            
             for mem in remember_split[1:]:
                 memory.save_memory(mem.strip())
+
             if memory.is_too_much():
                 logging.warn("Recycling memory...")
                 asyncio.create_task(recycle_memory())
-
-            ai_text = remember_split[0].strip("/")
-
-        if not ai_text:
-            logging.info(f"Nothing to answer")
-            return
-
-        forget_split = ai_text.split("forget")
-        if len(forget_split) > 1:
-            memory.delete_memory(forget_split[1].strip())
-            ai_text = forget_split[0].strip("/")
+            
+            if line:
+                ai_text += line + "\n"
 
         if not ai_text:
             logging.info(f"Nothing to answer")
             return
-
-        append_history(chat.id, {"role": "CHATBOT", "message": escape_str(ai_text)})
 
         if "/decline" in ai_text:
             logging.info(f"AI declined.")
@@ -243,13 +249,15 @@ async def prompt_ai(
             )
             return
 
+        await context.bot.send_chat_action(chat_id=chat.id, action="typing")
+
         ai_messages = ai_text.split("\n")
 
         for i, msg in enumerate(ai_messages):
             if not msg:
                 continue
             reply_to = update.message.id if i == 0 else None
-            delay = len(msg) / 40
+            delay = len(msg) / 20
 
             if i == 0:
                 delay -= 5
@@ -260,6 +268,9 @@ async def prompt_ai(
             while delay > (now() - start_time):
                 await context.bot.send_chat_action(chat_id=chat.id, action="typing")
                 await asyncio.sleep(0.5)
+
+            ai_resp_to_history = f"Ты ответил: {escape_str(msg)}"
+            append_history(chat.id, {"role": "CHATBOT", "message": ai_resp_to_history})
 
             await context.bot.send_message(
                 chat_id=chat.id,
