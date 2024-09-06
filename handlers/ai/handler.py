@@ -195,21 +195,13 @@ async def prompt_ai(
         preamble = preamble.replace("<DATE>", formatted_time)
 
         history = chat_history[chat.id][-20:]
-        message_ids = {}
-        history_str = "Прошлые сообщения в чате\n"
 
-        for ind, msg in enumerate(history):
-            if ind == len(history) - 1:
-                line = f"\nСообщение адрессованное тебе\n{msg["message"]}\n"
-            else:
-                line = f"{msg["message"]}\n"
-            history_str += line
-        
-        history_str += "Придумай ответ на сообщение адрессованное тебе."
+        ai_prompt = "Придумай ответ на следующее сообщение:\n" + msg
 
         ai_response = co.chat(
+            chat_history=history,
             preamble=preamble,
-            message=history_str,
+            message=ai_prompt,
             max_tokens=350,
             temperature=0,
             model="command-r-plus",
@@ -269,7 +261,7 @@ async def prompt_ai(
                 await context.bot.send_chat_action(chat_id=chat.id, action="typing")
                 await asyncio.sleep(0.5)
 
-            ai_resp_to_history = f"Ты ответил: {escape_str(msg)}"
+            ai_resp_to_history = f"Ты ответила: {escape_str(msg)}"
             append_history(chat.id, {"role": "CHATBOT", "message": ai_resp_to_history})
 
             await context.bot.send_message(
