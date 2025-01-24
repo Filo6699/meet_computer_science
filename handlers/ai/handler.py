@@ -218,7 +218,7 @@ async def prompt_ai(
             if not msg:
                 continue
             reply_to = update.message.id if i == 0 else None
-            delay = len(msg) / 20
+            delay = len(msg) / 10
 
             if i == 0:
                 delay -= 5
