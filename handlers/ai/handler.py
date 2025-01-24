@@ -10,33 +10,19 @@ import httpx
 from decouple import config
 from telegram import Update
 from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters
-import cohere
 
 from core.config import ADMIN_ID, ALLOWED_CHATS
 from core.bot import app
+from handlers.ai.deepseek import API, API_KEY
 from handlers.ai.memories import Memories
 from handlers.ai.prompts import SYSTEM_PROMPT, RECYCLE_MEMORY_PROMPT, SCAN_CHAT_PROMPT
 
-
-COHERE_API_KEYS_STR = config("COHERE_API_KEYS", default=None)
-COHERE_API_KEYS = None
-
-if COHERE_API_KEYS_STR:
-    try:
-        COHERE_API_KEYS = list(json.loads(COHERE_API_KEYS_STR))
-    except Exception as err:
-        logging.ERROR(
-            "COHERE_API_KEYS has incorrect list structure. Disabling AI module..."
-        )
 
 aliases = [
     "саенс",
     "фембой",
     "@meet_computer_science_bot",
 ]
-co = None
-
-current_key = 0
 
 chat_history = {}
 last_prompt = {}
@@ -61,62 +47,59 @@ def escape_str(to_escape: str) -> str:
 async def chat_parse(chat_id: int, depth=0):
     if depth == 0:
         logging.warn(f"Parsing a chat ({chat_id})")
-    
+
     raw_history = chat_history[chat_id]
     history = []
     for msg in raw_history:
         role = msg["role"]
-        message = msg["message"]
-        if role == "CHATBOT":
+        message = msg["content"]
+        if role == "assistant":
             message = "Твоё сообщение - " + message
         history.append(message)
-    
+
     history_str = "\n".join(history)
 
     prompt = SCAN_CHAT_PROMPT.replace("<CHAT>", history_str)
     prompt = prompt.replace("<MEMORIES>", memory.get_all_memories())
 
     try:
-        ai_response = co.chat(
-            message=prompt,
-            temperature=0,
-            model="command-r-plus",
+        ai_text = API.generate_response(
+            [
+                {
+                    "role": "system",
+                    "content": prompt,
+                }
+            ]
         )
-        
-        if "/decline" in ai_response.text:
+
+        if "/decline" in ai_text:
             logging.info(f"Nothing to memorize in chat parse")
             return
-        
-        new_memories = ai_response.text.split("\n")
+
+        new_memories = ai_text.split("\n")
         new_memories = [mem for mem in new_memories if len(mem) > 2]
         for mem in new_memories:
             logging.info(f"Chat parse new memory: {mem}")
             memory.save_memory(mem)
     except Exception as err:
-        if isinstance(err, cohere.TooManyRequestsError):
-            if depth >= len(COHERE_API_KEYS):
-                logging.critical("All keys are rate limited.")
-                return
-
-            logging.warning("Too many requests. Switching key...")
-            update_co()
-            await chat_parse(depth + 1)
-            return
         logging.error(err, type(err))
 
 
-async def recycle_memory(additional_prompt: str="", depth=0):
+async def recycle_memory(additional_prompt: str = "", depth=0):
     prompt = RECYCLE_MEMORY_PROMPT.replace("<MEMORIES>", memory.get_all_memories())
     if additional_prompt:
         prompt = prompt.replace("<additional_prompt>", additional_prompt)
 
     try:
-        ai_response = co.chat(
-            message=prompt,
-            temperature=0,
-            model="command-r-plus",
+        ai_text = API.generate_response(
+            [
+                {
+                    "role": "system",
+                    "content": prompt,
+                }
+            ]
         )
-        new_memories = ai_response.text.split("\n")
+        new_memories = ai_text.split("\n")
         new_memories = [mem for mem in new_memories if len(mem) > 2]
         memory.replace_all_memories(new_memories)
     except Exception as err:
@@ -140,26 +123,8 @@ def append_history(chat_id: int, val):
 
     chat_history[chat_id].append(val)
 
-    if len(chat_history[chat_id]) > 100:
-        chat_history[chat_id] = chat_history[chat_id][-100:]
-
-
-def update_co():
-    global current_key, co
-
-    temp = current_key
-    current_key = (current_key + 1) % len(COHERE_API_KEYS)
-    key = COHERE_API_KEYS[temp]
-
-    httpx_client = None
-    if proxies:
-        httpx_client = httpx.Client(proxies=proxies)
-
-    co = cohere.Client(
-        api_key=key,
-        httpx_client=httpx_client,
-    )
-    logging.warn("Rotating API key for Cohere")
+    if len(chat_history[chat_id]) > 15:
+        chat_history[chat_id] = chat_history[chat_id][-15:]
 
 
 async def prompt_ai(
@@ -180,10 +145,10 @@ async def prompt_ai(
     ]
     username = user_aliases[0]
 
-    msg = f"{username} пишет: \"{prompt}\""
+    msg = f'{username} пишет: "{prompt}"'
     logging.info(f"AI prompt - {msg}")
     if depth == 0:
-        append_history(chat.id, {"role": "USER", "message": msg})
+        append_history(chat.id, {"role": "user", "content": msg})
 
     current_time = datetime.now()
     formatted_time = current_time.strftime("%Y-%m-%d %H:%M:%S")
@@ -198,16 +163,20 @@ async def prompt_ai(
 
         ai_prompt = "Придумай ответ на следующее сообщение:\n" + msg
 
-        ai_response = co.chat(
-            chat_history=history,
-            preamble=preamble,
-            message=ai_prompt,
-            max_tokens=350,
-            temperature=0,
-            model="command-r-plus",
+        ai_text = API.generate_response(
+            [
+                {
+                    "role": "system",
+                    "content": preamble,
+                },
+                *history,
+                {
+                    "role": "system",
+                    "content": ai_prompt,
+                },
+            ]
         )
 
-        ai_text: str = ai_response.text
         logging.info(f"AI response: {escape_str(ai_text)}")
 
         line_split = ai_text.split("\n")
@@ -217,14 +186,14 @@ async def prompt_ai(
                 continue
             remember_split = line.split("/remember")
             line = remember_split[0].strip()
-            
+
             for mem in remember_split[1:]:
                 memory.save_memory(mem.strip())
 
             if memory.is_too_much():
                 logging.warn("Recycling memory...")
                 asyncio.create_task(recycle_memory())
-            
+
             if line:
                 ai_text += line + "\n"
 
@@ -259,10 +228,10 @@ async def prompt_ai(
             start_time = now()
             while delay > (now() - start_time):
                 await context.bot.send_chat_action(chat_id=chat.id, action="typing")
-                await asyncio.sleep(0.5)
+                await asyncio.sleep(2)
 
-            ai_resp_to_history = f"Ты ответила: {escape_str(msg)}"
-            append_history(chat.id, {"role": "CHATBOT", "message": ai_resp_to_history})
+            ai_resp_to_history = escape_str(msg)
+            append_history(chat.id, {"role": "assistant", "content": ai_resp_to_history})
 
             await context.bot.send_message(
                 chat_id=chat.id,
@@ -270,18 +239,6 @@ async def prompt_ai(
                 reply_to_message_id=reply_to,
             )
     except Exception as err:
-        if isinstance(err, cohere.TooManyRequestsError):
-            if depth >= len(COHERE_API_KEYS):
-                logging.critical("All keys are rate limited.")
-                await context.bot.send_message(
-                    chat_id=chat.id, text="Rate limited. Все ключи закончились"
-                )
-                return
-
-            logging.warning("Too many requests. Switching key...")
-            update_co()
-            await prompt_ai(prompt, update, context, depth + 1)
-            return
         logging.error(err, type(err))
         await context.bot.send_message(chat_id=chat.id, text="Something went wrong.")
 
@@ -291,6 +248,7 @@ async def handle_ai(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
 
     if chat.id not in ALLOWED_CHATS:
+        print(f"Unknown user: {chat.id} {user.username} {update.message.text}")
         return
 
     args = update.message.text.split()
@@ -356,11 +314,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
 
     if chat.id not in ALLOWED_CHATS:
+        print(f"Unknown user: {chat.id} {user.username} {update.message.text}")
         return
 
     if chat.id not in until_update:
         until_update[chat.id] = UPDATE_INTERVAL + 1
-    
+
     until_update[chat.id] -= 1
     if until_update[chat.id] <= 0:
         until_update[chat.id] = UPDATE_INTERVAL
@@ -379,12 +338,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     msg = f"{user.username}: {update.message.text}"
     logging.debug(f"AI history - {msg}")
-    append_history(chat.id, {"role": "USER", "message": msg})
+    append_history(chat.id, {"role": "user", "content": msg})
 
 
-if COHERE_API_KEYS:
-    update_co()
-
+if API_KEY:
     app.add_handler(CommandHandler("ai", handle_ai))
     app.add_handler(CommandHandler("chat_parse", handle_chat_parse))
     app.add_handler(CommandHandler("memory_recycle", handle_memory_recycle))
