@@ -129,7 +129,7 @@ def form_chat_overview(chat_history: List[dict], role: str = "user") -> dict:
         "content": "",
     }
     for i, msg in enumerate(chat_history):
-        output['content'] += f"{"\n" if i > 0 else ""}{i+1}. {msg["content"]}"
+        output['content'] += f"{'\n' if i > 0 else ''}{i+1}. {msg['content']}"
     return output
 
 
@@ -279,7 +279,7 @@ async def handle_ai(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if chat.id not in ALLOWED_CHATS:
-        print(f"Unknown user: {chat.id} {user.username} {update.message.text if update.message and update.message.text else ""}")
+        print(f"Unknown user: {chat.id} {user.username} {update.message.text if update.message and update.message.text else ''}")
         return
 
     if not update.message or not update.message.text:
