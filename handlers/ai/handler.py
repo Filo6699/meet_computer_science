@@ -72,6 +72,9 @@ async def chat_parse(chat_id: int, depth=0):
             ]
         )
 
+        if not ai_text:
+            raise Exception("Generation failed")
+
         if "/decline" in ai_text:
             logging.info(f"Nothing to memorize in chat parse")
             return
@@ -85,7 +88,7 @@ async def chat_parse(chat_id: int, depth=0):
         logging.error(err, type(err))
 
 
-async def recycle_memory(additional_prompt: str = "", depth=0):
+async def recycle_memory(additional_prompt: Optional[str] = "", depth=0):
     prompt = RECYCLE_MEMORY_PROMPT.replace("<MEMORIES>", memory.get_all_memories())
     if additional_prompt:
         prompt = prompt.replace("<additional_prompt>", additional_prompt)
@@ -99,19 +102,12 @@ async def recycle_memory(additional_prompt: str = "", depth=0):
                 }
             ]
         )
+        if not ai_text:
+            raise Exception("Generation failed")
         new_memories = ai_text.split("\n")
         new_memories = [mem for mem in new_memories if len(mem) > 2]
         memory.replace_all_memories(new_memories)
     except Exception as err:
-        if isinstance(err, cohere.TooManyRequestsError):
-            if depth >= len(COHERE_API_KEYS):
-                logging.critical("All keys are rate limited.")
-                return
-
-            logging.warning("Too many requests. Switching key...")
-            update_co()
-            await recycle_memory(depth + 1)
-            return
         logging.error(err, type(err))
 
 
@@ -127,25 +123,52 @@ def append_history(chat_id: int, val):
         chat_history[chat_id] = chat_history[chat_id][-15:]
 
 
+def form_chat_overview(chat_history: List[dict], role: str = "user") -> dict:
+    output = {
+        "role": role,
+        "content": "",
+    }
+    for i, msg in enumerate(chat_history):
+        output['content'] += f"{"\n" if i > 0 else ""}{i+1}. {msg["content"]}"
+    return output
+
+
 async def prompt_ai(
     prompt: str, update: Update, context: ContextTypes.DEFAULT_TYPE, depth: int = 0
 ):
     chat = update.effective_chat
     user = update.effective_user
+    message = update.effective_message
+
+    # Channels handle
+    sender_chat = message.sender_chat if message else None
+
+    if not chat or not user:
+        return
 
     if last_prompt.get(chat.id, 0) + 3 > now():
         return
 
     prompt = escape_str(prompt)
 
-    user_aliases = [
-        name
-        for name in [user.full_name, user.username]
-        if type(name) == str and len(name) > 1
-    ]
+    user_aliases = []
+    if user is not None:
+        user_aliases = [
+            name
+            for name in [user.username, user.full_name]
+            if isinstance(name, str) and len(name) > 1
+        ]
+    elif sender_chat is not None:
+        user_aliases = [
+            name
+            for name in [sender_chat.title, sender_chat.username]
+            if isinstance(name, str) and len(name) > 1
+        ]
+    else:
+        return
     username = user_aliases[0]
 
-    msg = f'{username} пишет: "{prompt}"'
+    msg = f'{username}: "{prompt}"'
     logging.info(f"AI prompt - {msg}")
     if depth == 0:
         append_history(chat.id, {"role": "user", "content": msg})
@@ -160,8 +183,9 @@ async def prompt_ai(
         preamble = preamble.replace("<DATE>", formatted_time)
 
         history = chat_history[chat.id][-20:]
+        overview = form_chat_overview(history)
 
-        ai_prompt = "Придумай ответ на следующее сообщение:\n" + msg
+        ai_prompt = "Messages are in this format: [index]. [username]: [content]\nMessages with username \"You\" were written by you in previous prompts. Write your new message in the format of \"your message\" (or/and use functions) (use eng or rus or a mix if you want)"
 
         ai_text = API.generate_response(
             [
@@ -169,13 +193,16 @@ async def prompt_ai(
                     "role": "system",
                     "content": preamble,
                 },
-                *history,
+                overview,
                 {
                     "role": "system",
                     "content": ai_prompt,
                 },
             ]
         )
+
+        if not ai_text:
+            raise Exception("Generation failed")
 
         logging.info(f"AI response: {escape_str(ai_text)}")
 
@@ -188,10 +215,11 @@ async def prompt_ai(
             line = remember_split[0].strip()
 
             for mem in remember_split[1:]:
-                memory.save_memory(mem.strip())
+                mem = mem.lstrip("[ ").rstrip("] ")
+                memory.save_memory(mem)
 
             if memory.is_too_much():
-                logging.warn("Recycling memory...")
+                logging.warning("Recycling memory...")
                 asyncio.create_task(recycle_memory())
 
             if line:
@@ -218,7 +246,7 @@ async def prompt_ai(
             if not msg:
                 continue
             reply_to = update.message.id if i == 0 else None
-            delay = len(msg) / 10
+            delay = len(msg) / 13
 
             if i == 0:
                 delay -= 5
@@ -231,7 +259,7 @@ async def prompt_ai(
                 await asyncio.sleep(2)
 
             ai_resp_to_history = escape_str(msg)
-            append_history(chat.id, {"role": "assistant", "content": ai_resp_to_history})
+            append_history(chat.id, {"role": "assistant", "content": f"You: {ai_resp_to_history}"})
 
             await context.bot.send_message(
                 chat_id=chat.id,
@@ -247,8 +275,14 @@ async def handle_ai(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     chat = update.effective_chat
 
+    if not user or not chat:
+        return
+
     if chat.id not in ALLOWED_CHATS:
-        print(f"Unknown user: {chat.id} {user.username} {update.message.text}")
+        print(f"Unknown user: {chat.id} {user.username} {update.message.text if update.message and update.message.text else ""}")
+        return
+
+    if not update.message or not update.message.text:
         return
 
     args = update.message.text.split()
@@ -264,9 +298,14 @@ async def handle_ai(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_memory_recycle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    chat = update.effective_chat
+
+    if not user:
+        return
 
     if user.id != ADMIN_ID:
+        return
+
+    if not update.message or not update.message.text:
         return
 
     args = update.message.text.split(" ")
@@ -280,9 +319,11 @@ async def handle_memory_recycle(update: Update, context: ContextTypes.DEFAULT_TY
 
 async def handle_memory_addition(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    chat = update.effective_chat
+    
+    if not user or user.id != ADMIN_ID:
+        return
 
-    if user.id != ADMIN_ID:
+    if not update.message or not update.message.text:
         return
 
     try:
@@ -301,7 +342,10 @@ async def handle_chat_parse(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     chat = update.effective_chat
 
-    if user.id != ADMIN_ID:
+    if not chat or not user or user.id != ADMIN_ID:
+        return
+
+    if not update.message:
         return
 
     await update.message.reply_text("Парсю чат!")
@@ -309,9 +353,25 @@ async def handle_chat_parse(update: Update, context: ContextTypes.DEFAULT_TYPE):
     asyncio.create_task(task)
 
 
+async def handle_view_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    chat = update.effective_chat
+
+    if not chat or not user or user.id != ADMIN_ID:
+        return
+
+    if not update.message:
+        return
+
+    await update.message.reply_text(str(form_chat_overview(chat_history[chat.id][-20:])))
+
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     chat = update.effective_chat
+
+    if not chat or not user:
+        return
 
     if chat.id not in ALLOWED_CHATS:
         print(f"Unknown user: {chat.id} {user.username} {update.message.text}")
@@ -325,7 +385,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         until_update[chat.id] = UPDATE_INTERVAL
         asyncio.create_task(chat_parse(chat.id))
 
-    if not update.message.text or len(update.message.text) < 2:
+    if not update.message or not update.message.text or len(update.message.text) < 2:
         return
 
     if any([(alias in update.message.text.lower()) for alias in aliases]) or (
@@ -346,4 +406,5 @@ if API_KEY:
     app.add_handler(CommandHandler("chat_parse", handle_chat_parse))
     app.add_handler(CommandHandler("memory_recycle", handle_memory_recycle))
     app.add_handler(CommandHandler("add_to_memory", handle_memory_addition))
+    app.add_handler(CommandHandler("view_chat", handle_view_chat))
     app.add_handler(MessageHandler(filters.TEXT, handle_message))

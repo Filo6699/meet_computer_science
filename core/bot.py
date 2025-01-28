@@ -22,9 +22,6 @@ import core.logs
 from core.config import BOT_TOKEN
 
 
-app: Optional[Application] = None
-
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Hello! There is nothing you can do yet, but you may [contribute](https://github.com/Filo6699/meet_computer_science) or [suggest ideas](https://t.me/wilbursoot_fan)",
